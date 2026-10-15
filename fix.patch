@@ -1,0 +1,102 @@
+diff --git a/src/main.js b/src/main.js
+index 344b106..a7a57d5 100644
+--- a/src/main.js
++++ b/src/main.js
+@@ -1,3 +1,7 @@
++// Fixed by: https://github.com/Lee-Organization/
++// Local fixes: effective request handling and honest posting-result reporting.
++// These changes do not establish a fix for YouTube's server-side GIF rejection.
++// Original project: Desktop GIFs by rayytor; GPL-3.0 (see LICENSE).
+ // Runs in the page's own JavaScript world. Wraps window.fetch so that a comment
+ // request whose text is an armed marker is rewritten into a GIF comment.
+ //
+@@ -46,18 +50,14 @@
+     }
+   });
+ 
+-  async function readBody(input, init) {
+-    const isRequest = input instanceof Request;
+-    const headers = new Headers(isRequest ? input.headers : (init && init.headers) || {});
+-    let buf;
+-    if (isRequest) buf = await input.clone().arrayBuffer();
+-    else if (init && init.body != null) buf = await new Response(init.body).arrayBuffer();
+-    else return null;
+-    // YouTube gzips request bodies between 500 bytes and 500 kB.
+-    const text = headers.get('content-encoding') === 'gzip'
++  async function readBody(request) {
++    const headers = new Headers(request.headers);
++    if (!request.body) return { request, headers, text: '' };
++    const buf = await request.clone().arrayBuffer();
++    const text = headers.get('content-encoding')?.trim().toLowerCase() === 'gzip'
+       ? await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'))).text()
+       : new TextDecoder().decode(buf);
+-    return { headers, text };
++    return { request, headers, text };
+   }
+ 
+   const originalFetch = window.fetch;
+@@ -74,12 +74,23 @@
+ 
+   async function handleWatched(url, input, init, originalArgs) {
+     let parsed = null;
++    let request;
+     try {
+-      parsed = await readBody(input, init);
+-    } catch (e) { /* a body we cannot read: leave the request alone */ }
++      // Apply fetch's RequestInit overrides before inspecting or rewriting.
++      // Cloning a Request avoids consuming the caller's original body.
++      request = new Request(input instanceof Request ? input.clone() : new URL(String(input), location.href), init);
++      parsed = await readBody(request);
++    } catch (e) {
++      if (armed.size) {
++        for (const nonce of armed.keys()) toContent({ type:'result', nonce, ok:false, error:'The GIF request could not be inspected safely. It was not sent.' });
++        armed.clear();
++        throw new TypeError('GIF request inspection failed');
++      }
++      return request ? originalFetch.call(this, request) : originalFetch.apply(this, originalArgs);
++    }
+ 
+     const match = parsed && parsed.text.match(MARKER);
+-    if (!match) return originalFetch.apply(this, originalArgs);
++    if (!match) return originalFetch.call(this, request);
+ 
+     // From here on a marker is present, so the original request must never be
+     // sent: it would publish the marker as visible text.
+@@ -109,12 +120,11 @@
+       body.tenorId = id;
+       const headers = parsed.headers;
+       headers.delete('content-encoding');
++      headers.delete('content-length');
+       const payload = JSON.stringify(body);
+-      response = input instanceof Request
+-        ? await originalFetch.call(this, new Request(input, { body: payload, headers }))
+-        : await originalFetch.call(this, input, { ...init, body: payload, headers });
++      response = await originalFetch.call(this, new Request(parsed.request, { body: payload, headers }));
+     } catch (e) {
+-      toContent({ type: 'result', nonce, ok: false, error: 'The request could not be sent. Nothing was posted.' });
++      toContent({ type: 'result', nonce, ok: false, uncertain: true, error: 'The request failed without a confirmed result. Check your comments before trying again.' });
+       throw e;
+     }
+ 
+@@ -124,18 +134,14 @@
+       const feedback = json.actionResult && json.actionResult.feedbackText && json.actionResult.feedbackText.runs
+         ? json.actionResult.feedbackText.runs.map((r) => r.text).join('')
+         : '';
+-      // YouTube only takes GIFs that Tenor rates G. For any other GIF a reply
+-      // gets HTTP 400 INVALID_ARGUMENT, and a comment gets HTTP 200 with a
+-      // showErrorAction where the actionResult would be. The page's own request
+-      // was valid before the GIF was added, so both of these mean the GIF.
+-      const refused = response.ok ? !json.actionResult : !!json.error && json.error.status === 'INVALID_ARGUMENT';
+       const fallback = response.ok ? 'YouTube did not accept this GIF comment. Nothing was posted.' : `YouTube returned HTTP ${response.status}.`;
++      const invalidArgument = response.status === 400 && json.error?.status === 'INVALID_ARGUMENT';
+       const error = ok ? null
+-        : refused ? 'YouTube does not accept this GIF. Try a different one. Nothing was posted.'
++        : invalidArgument ? 'YouTube rejected this GIF submission (HTTP 400, INVALID_ARGUMENT). This generic error does not identify the invalid field or prove that the chosen GIF is unsuitable. Desktop GIF posting is currently reported broken upstream.'
+         : (json.error && json.error.message) || feedback || fallback;
+       toContent({ type: 'result', nonce, ok, error });
+     } catch (e) {
+-      toContent({ type: 'result', nonce, ok: response.ok, error: response.ok ? null : `YouTube returned HTTP ${response.status}.` });
++      toContent({ type: 'result', nonce, ok: false, uncertain: true, error: `YouTube returned HTTP ${response.status}, but its confirmation could not be read. Check your comments before trying again.` });
+     }
+     return response;
+   }

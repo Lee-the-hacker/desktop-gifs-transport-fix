@@ -1,0 +1,56 @@
+DESKTOP GIFs — LOCAL TRANSPORT / ERROR-HANDLING PATCH
+
+Status checked October 15, 2026.
+THIS DOES NOT RESTORE YOUTUBE GIF POSTING.
+
+Your original Downloads\youtube gifs folder was left unchanged.
+This is a modified copy of the supplied Desktop GIFs 0.1.3 extension.
+Its version is 0.1.3.1 to distinguish this local patch from upstream releases.
+
+The upstream maintainer currently reports desktop GIF posting broken since
+October 14, 2026, with no known working fix. This matches the reported symptom:
+ordinary text works, while every GIF is rejected with INVALID_ARGUMENT.
+https://github.com/rayytor/desktop_gifs#desktop-gifs
+
+CHANGES
+- Apply RequestInit body/header/options overrides before inspecting a Request.
+- Preserve the effective method, credentials, redirect/cache options and headers
+  when sending the rewritten request.
+- Inspect a clone so the caller's original Request body remains unconsumed.
+- Handle streamed ordinary bodies using the normalized request.
+- Remove obsolete compression/content-length metadata after JSON rewriting.
+- Stop claiming a generic INVALID_ARGUMENT means the chosen GIF is unsuitable.
+- Stop treating unreadable HTTP 200 responses as confirmed posting success.
+- Report unconfirmed network failures without saying nothing was posted.
+- No automatic retries, client spoofing, speculative payload fields or fallback
+  text comments were added. The existing tenorId submission format is unchanged.
+
+OPTIONAL INSTALLATION
+This copy improves transport handling and diagnostics only. It does not resolve
+YouTube's current server rejection. To try it, replace files in your existing
+unpacked extension folder and reload its card at edge://extensions, then refresh
+YouTube. Keep the same extension installation to retain its stored favorites.
+Do not run old and patched copies simultaneously.
+
+VALIDATION
+Run: node test-transport.cjs
+Tests use mocked network responses. Nothing was sent to YouTube or Tenor.
+Checked: text passthrough, Request+init override semantics, request options,
+gzip input, generic 400 errors, unreadable 200 confirmation, network uncertainty,
+no retries, unarmed-marker blocking, duplicate-hook prevention, streaming body.
+These checks do not validate YouTube's undocumented GIF submission contract.
+No live posting test was performed.
+
+ATTRIBUTION
+Original project: Desktop GIFs by rayytor
+https://github.com/rayytor/desktop_gifs
+Original source supplied by the user; local modifications made October 15, 2026.
+Distributed under the upstream GPL-3.0 license; see LICENSE.
+
+CREDIT AND UPSTREAM SCOPE
+Fixed by: https://github.com/Lee-Organization/
+Credit applies to this local 0.1.3 transport/error-handling patch; original project
+authorship and GPL licensing are retained. Latest upstream main already fixes
+several older request-override and response-confirmation defects. This patch is
+not a claim of a new upstream fix or restored GIF posting. Do not apply this
+0.1.3-specific diff blindly to current upstream code.
